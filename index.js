@@ -288,6 +288,8 @@ async function scan() {
   const twistcli_publish = core.getInput('twistcli_publish');
   const resultsFile = core.getInput('results_file');
   const sarifFile = core.getInput('sarif_file');
+  const timeout = core.getInput('timeout');
+  const onTimeout = core.getInput('on_timeout');
 
   try {
     let token;
@@ -345,9 +347,39 @@ async function scan() {
     }
 
     twistcliCmd = twistcliCmd.concat([imageName]);
-    const exitCode = await exec(twistcliCmd.join(' '), undefined, {
-      ignoreReturnCode: true,
-    });
+
+    let exitCode;
+    const executeScan = async () => {
+      return await exec(twistcliCmd.join(' '), undefined, {
+        ignoreReturnCode: true,
+      });
+    };
+
+    if (timeout) {
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Scan timed out'));
+        }, parseInt(timeout) * 1000);
+      });
+
+      try {
+        exitCode = await Promise.race([executeScan(), timeoutPromise]);
+      } catch (err) {
+        if (err.message === 'Scan timed out') {
+          if (onTimeout === 'success') {
+            core.warning('Scan timed out. Finishing with success, but no results will be generated.');
+            process.exit(0);
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
+    } else {
+      exitCode = await executeScan();
+    }
+
     if (exitCode > 0) {
       core.setFailed('Image scan failed');
     }
